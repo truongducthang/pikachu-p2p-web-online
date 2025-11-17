@@ -10,5 +10,9 @@ export default [
   {
     path: "/",
     file: "routes/home.tsx"
+  },
+  {
+    path: "*",
+    file: "routes/404.tsx" 
   }
 ] satisfies RouteConfig;
