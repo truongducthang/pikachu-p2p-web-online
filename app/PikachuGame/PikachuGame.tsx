@@ -88,18 +88,21 @@ const PikachuGame = () => {
   const [screen, setScreen] = useState('menu');
   const [roomCode, setRoomCode] = useState('');
   const [playerName, setPlayerName] = useState('');
-  const [gameState, setGameState] = useState(null);
-  const [selectedCells, setSelectedCells] = useState([]);
-  const [myPlayerId, setMyPlayerId] = useState(null);
-  const [timeLeft, setTimeLeft] = useState(180);
-  const [connectionPath, setConnectionPath] = useState(null);
-  const [hintCells, setHintCells] = useState([]);
-  const [roomList, setRoomList] = useState([]);
+  const [gameState, setGameState] = useState<any>(null);
+  const [selectedCells, setSelectedCells] = useState<number[]>([]);
+  const [myPlayerId, setMyPlayerId] = useState<string | null>(null);
+  const [timeLeft, setTimeLeft] = useState(300); // default 5 phút = 300s
+  const [connectionPath, setConnectionPath] = useState<any>(null);
+  const [hintCells, setHintCells] = useState<number[]>([]);
+  const [roomList, setRoomList] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [notification, setNotification] = useState(null);
-  const [iconCount, setIconCount] = useState(15);
+  const [notification, setNotification] = useState<any>(null);
+  const [iconCount, setIconCount] = useState(100);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [gridSize, setGridSize] = useState(8);
+  const [gridSize, setGridSize] = useState(20);
+
+  // NEW: time limit minutes setting on create screen
+  const [timeLimitMinutes, setTimeLimitMinutes] = useState(5); // default 5 phút
 
   const icons = ['🐱', '🐶', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🐔', '🐙', '🦀', '🐠', '🐟', '🦈', '🐡', '🦐', '🦑', '🐢', '🦎', '🐊', '🦖', '🦕', '🐉', '🦅', '🦉', '🦋', '🐌', '🐛', '🐝', '🐞', '🦗', '🕷️', '🦂', '🦟', '🦠', '🐍', '🦎', '🐙', '🦑', '🦐', '🦞', '🦀', '🐡', '🐠', '🐟', '🐬', '🐳', '🐋', '🦈', '🐊', '🐅', '🐆', '🦓', '🦍', '🦧', '🐘', '🦛', '🦏', '🐪', '🐫', '🦒', '🦘', '🦬', '🐃', '🐂', '🐄', '🐎', '🐖', '🐏', '🐑', '🦙', '🐐', '🦌', '🐕', '🐩', '🦮', '🐈', '🐓', '🦃', '🦚', '🦜', '🦢', '🦩', '🕊️', '🐇', '🦝', '🦨', '🦡', '🦫', '🦦', '🦥', '🐁', '🐀', '🐿️', '🦔'];
 
@@ -108,11 +111,23 @@ const PikachuGame = () => {
     const savedName = localStorage.getItem('playerName');
     if (savedName) setPlayerName(savedName);
   }, []);
+  
 
-  const showNotification = (message, type = 'info') => {
+  const showNotification = (message: string, type = 'info') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 3000);
   };
+
+  // Tự động dọn phòng sau 30 phút không hoạt động
+  useEffect(() => {
+    if (gameState?.status === 'waiting') {
+      const timer = setTimeout(() => {
+        db.set(`rooms/${roomCode}`, null); // xóa phòng
+      }, 30 * 60 * 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [gameState?.status]);
+
 
   const loadRoomList = async () => {
     try {
@@ -134,35 +149,37 @@ const PikachuGame = () => {
     }
   };
 
-  const generateBoard = () => {
-    const totalCells = gridSize * gridSize;
+  // generateBoard now accepts optional size
+  const generateBoard = (sizeParam?: number) => {
+    const size = sizeParam || gridSize;
+    const totalCells = size * size;
     const maxPairs = Math.floor(totalCells / 2);
-    
-    // iconCount là số LOẠI nhân vật khác nhau
-    // Mỗi loại sẽ có 2 ô (tạo thành 1 cặp)
+
     const actualPairs = Math.min(iconCount, maxPairs, icons.length);
-    
-    const pairs = [];
+
+    const pairs: any[] = [];
     const usedIcons = icons.slice(0, actualPairs);
-    
-    // Tạo cặp cho mỗi nhân vật
+
+    // create pairs
     for (let i = 0; i < actualPairs; i++) {
       const icon = usedIcons[i];
       pairs.push({ id: i * 2, icon, matched: false });
       pairs.push({ id: i * 2 + 1, icon, matched: false });
     }
-    
-    // Shuffle các cặp
+
+    // shuffle
     for (let i = pairs.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [pairs[i], pairs[j]] = [pairs[j], pairs[i]];
     }
-    
-    // Fill ô trống nếu bàn chơi lớn hơn
+
+    // fill empties
     while (pairs.length < totalCells) {
       pairs.push({ id: pairs.length, icon: '', matched: true, isEmpty: true });
     }
-    
+
+    // ensure length = totalCells
+    pairs.length = totalCells;
     return pairs;
   };
 
@@ -170,85 +187,188 @@ const PikachuGame = () => {
     return Math.random().toString(36).substr(2, 6).toUpperCase();
   };
 
-  const canGoStraightHorizontal = (board, row, col1, col2) => {
+  // Helper: coi ô "free" (có thể đi qua) là ô không tồn tại / là isEmpty / đã matched
+  const isFree = (cell: any) => !cell || cell.isEmpty || cell.matched;
+
+  const canGoStraightHorizontal = (board: any[], row: number, col1: number, col2: number, size: number, returnPath = false) => {
     const start = Math.min(col1, col2);
     const end = Math.max(col1, col2);
     for (let c = start + 1; c < end; c++) {
-      const cell = board[row * gridSize + c];
-      if (cell && !cell.matched && !cell.isEmpty) return false;
+      const idx = row * size + c;
+      const cell = board[idx];
+      if (!isFree(cell)) return false;
+    }
+    if (returnPath) {
+      const path: number[][] = [];
+      for (let c = start; c <= end; c++) path.push([row, c]);
+      return path as any;
     }
     return true;
   };
 
-  const canGoStraightVertical = (board, col, row1, row2) => {
+  const canGoStraightVertical = (board: any[], col: number, row1: number, row2: number, size: number, returnPath = false) => {
     const start = Math.min(row1, row2);
     const end = Math.max(row1, row2);
     for (let r = start + 1; r < end; r++) {
-      const cell = board[r * gridSize + col];
-      if (cell && !cell.matched && !cell.isEmpty) return false;
+      const idx = r * size + col;
+      const cell = board[idx];
+      if (!isFree(cell)) return false;
+    }
+    if (returnPath) {
+      const path: number[][] = [];
+      for (let r = start; r <= end; r++) path.push([r, col]);
+      return path as any;
     }
     return true;
   };
 
-  const canConnect = (board, pos1, pos2, returnPath = false) => {
+  const canConnect = (board: any[], pos1: number, pos2: number, returnPath = false) => {
     if (pos1 === pos2) return false;
+    if (!board || pos1 < 0 || pos2 < 0 || pos1 >= board.length || pos2 >= board.length) return false;
+
     const cell1 = board[pos1];
     const cell2 = board[pos2];
     if (!cell1 || !cell2) return false;
-    if (cell1.isEmpty || cell2.isEmpty) return false;
-    if (cell1.icon !== cell2.icon || cell1.matched || cell2.matched) return false;
-    
-    const row1 = Math.floor(pos1 / gridSize);
-    const col1 = pos1 % gridSize;
-    const row2 = Math.floor(pos2 / gridSize);
-    const col2 = pos2 % gridSize;
-    
-    if (row1 === row2 && canGoStraightHorizontal(board, row1, col1, col2)) {
-      if (returnPath) {
-        const path = [];
-        const start = Math.min(col1, col2);
-        const end = Math.max(col1, col2);
-        for (let c = start; c <= end; c++) path.push([row1, c]);
-        return path;
-      }
-      return true;
+    if (cell1.icon !== cell2.icon) return false;
+    if (cell1.matched || cell2.matched || cell1.isEmpty || cell2.isEmpty) return false;
+
+    const size = Math.round(Math.sqrt(board.length));
+    const row1 = Math.floor(pos1 / size);
+    const col1 = pos1 % size;
+    const row2 = Math.floor(pos2 / size);
+    const col2 = pos2 % size;
+
+    // same row
+    if (row1 === row2) {
+      const res = canGoStraightHorizontal(board, row1, col1, col2, size, returnPath);
+      if (res) return res;
     }
-    
-    if (col1 === col2 && canGoStraightVertical(board, col1, row1, row2)) {
-      if (returnPath) {
-        const path = [];
-        const start = Math.min(row1, row2);
-        const end = Math.max(row1, row2);
-        for (let r = start; r <= end; r++) path.push([r, col1]);
-        return path;
-      }
-      return true;
+
+    // same column
+    if (col1 === col2) {
+      const res = canGoStraightVertical(board, col1, row1, row2, size, returnPath);
+      if (res) return res;
     }
-    
-    const cornerPos1 = row1 * gridSize + col2;
-    const cornerCell1 = board[cornerPos1];
-    if (cornerCell1 && (cornerCell1.matched || cornerCell1.isEmpty || cornerPos1 === pos1 || cornerPos1 === pos2)) {
-      if (canGoStraightHorizontal(board, row1, col1, col2) && canGoStraightVertical(board, col2, row1, row2)) {
+
+    // one corner
+    const corner1Idx = row1 * size + col2;
+    const corner2Idx = row2 * size + col1;
+
+    if ((isFree(board[corner1Idx]) || corner1Idx === pos1 || corner1Idx === pos2)) {
+      if (
+        canGoStraightHorizontal(board, row1, col1, col2, size) &&
+        canGoStraightVertical(board, col2, row1, row2, size)
+      ) {
         if (returnPath) {
-          const path = [];
-          const start = Math.min(col1, col2);
-          const end = Math.max(col1, col2);
-          for (let c = start; c <= end; c++) path.push([row1, c]);
+          const path: number[][] = [];
+          const startC = Math.min(col1, col2);
+          const endC = Math.max(col1, col2);
+          for (let c = startC; c <= endC; c++) path.push([row1, c]);
           const startR = Math.min(row1, row2);
           const endR = Math.max(row1, row2);
           for (let r = startR; r <= endR; r++) {
             if (r !== row1) path.push([r, col2]);
           }
-          return path;
+          return path as any;
         }
         return true;
       }
     }
-    
+
+    if ((isFree(board[corner2Idx]) || corner2Idx === pos1 || corner2Idx === pos2)) {
+      if (
+        canGoStraightVertical(board, col1, row1, row2, size) &&
+        canGoStraightHorizontal(board, row2, col1, col2, size)
+      ) {
+        if (returnPath) {
+          const path: number[][] = [];
+          const startR = Math.min(row1, row2);
+          const endR = Math.max(row1, row2);
+          for (let r = startR; r <= endR; r++) path.push([r, col1]);
+          const startC = Math.min(col1, col2);
+          const endC = Math.max(col1, col2);
+          for (let c = startC; c <= endC; c++) {
+            if (c !== col1) path.push([row2, c]);
+          }
+          return path as any;
+        }
+        return true;
+      }
+    }
+
+    // two-corner (scan rows)
+    for (let r = 0; r < size; r++) {
+      const mid1 = r * size + col1;
+      const mid2 = r * size + col2;
+
+      if ((isFree(board[mid1]) || mid1 === pos1 || mid1 === pos2) &&
+          (isFree(board[mid2]) || mid2 === pos1 || mid2 === pos2)) {
+        if (
+          canGoStraightVertical(board, col1, row1, r, size) &&
+          canGoStraightHorizontal(board, r, col1, col2, size) &&
+          canGoStraightVertical(board, col2, r, row2, size)
+        ) {
+          if (returnPath) {
+            const path: number[][] = [];
+            const s1 = Math.min(row1, r);
+            const e1 = Math.max(row1, r);
+            for (let rr = s1; rr <= e1; rr++) path.push([rr, col1]);
+            const s2 = Math.min(col1, col2);
+            const e2 = Math.max(col1, col2);
+            for (let cc = s2; cc <= e2; cc++) {
+              if (cc !== col1) path.push([r, cc]);
+            }
+            const s3 = Math.min(r, row2);
+            const e3 = Math.max(r, row2);
+            for (let rr = s3; rr <= e3; rr++) {
+              if (rr !== r) path.push([rr, col2]);
+            }
+            return path as any;
+          }
+          return true;
+        }
+      }
+    }
+
+    // two-corner (scan cols)
+    for (let c = 0; c < size; c++) {
+      const mid1 = row1 * size + c;
+      const mid2 = row2 * size + c;
+
+      if ((isFree(board[mid1]) || mid1 === pos1 || mid1 === pos2) &&
+          (isFree(board[mid2]) || mid2 === pos1 || mid2 === pos2)) {
+        if (
+          canGoStraightHorizontal(board, row1, col1, c, size) &&
+          canGoStraightVertical(board, c, row1, row2, size) &&
+          canGoStraightHorizontal(board, row2, c, col2, size)
+        ) {
+          if (returnPath) {
+            const path: number[][] = [];
+            const s1 = Math.min(col1, c);
+            const e1 = Math.max(col1, c);
+            for (let cc = s1; cc <= e1; cc++) path.push([row1, cc]);
+            const s2 = Math.min(row1, row2);
+            const e2 = Math.max(row1, row2);
+            for (let rr = s2; rr <= e2; rr++) {
+              if (rr !== row1) path.push([rr, c]);
+            }
+            const s3 = Math.min(c, col2);
+            const e3 = Math.max(c, col2);
+            for (let cc = s3; cc <= e3; cc++) {
+              if (cc !== c) path.push([row2, cc]);
+            }
+            return path as any;
+          }
+          return true;
+        }
+      }
+    }
+
     return false;
   };
 
-  const hasValidMoves = (board) => {
+
+  const hasValidMoves = (board: any[]) => {
     for (let i = 0; i < board.length; i++) {
       const cell = board[i];
       if (!cell || cell.matched || cell.isEmpty) continue;
@@ -261,7 +381,7 @@ const PikachuGame = () => {
     return false;
   };
 
-  const findValidPair = (board) => {
+  const findValidPair = (board: any[]) => {
     for (let i = 0; i < board.length; i++) {
       const cell = board[i];
       if (!cell || cell.matched || cell.isEmpty) continue;
@@ -278,8 +398,8 @@ const PikachuGame = () => {
     if (!gameState) return;
     
     const unmatchedCells = gameState.board
-      .map((cell, index) => ({ ...cell, originalIndex: index }))
-      .filter(cell => !cell.matched && !cell.isEmpty);
+      .map((cell: any, index: number) => ({ ...cell, originalIndex: index }))
+      .filter((cell: any) => !cell.matched && !cell.isEmpty);
     
     for (let i = unmatchedCells.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -288,11 +408,11 @@ const PikachuGame = () => {
     
     const newBoard = [...gameState.board];
     const unmatchedIndices = gameState.board
-      .map((cell, index) => ({ matched: cell.matched, isEmpty: cell.isEmpty, index }))
-      .filter(item => !item.matched && !item.isEmpty)
-      .map(item => item.index);
+      .map((cell: any, index: number) => ({ matched: cell.matched, isEmpty: cell.isEmpty, index }))
+      .filter((item: any) => !item.matched && !item.isEmpty)
+      .map((item: any) => item.index);
     
-    unmatchedCells.forEach((cell, i) => {
+    unmatchedCells.forEach((cell: any, i: number) => {
       const targetIndex = unmatchedIndices[i];
       newBoard[targetIndex] = { ...cell, id: targetIndex };
     });
@@ -345,7 +465,7 @@ const PikachuGame = () => {
     try {
       const code = generateRoomCode();
       const playerId = Date.now().toString();
-      const board = generateBoard();
+      const board = generateBoard(gridSize);
       
       localStorage.setItem('playerName', playerName);
       
@@ -358,7 +478,8 @@ const PikachuGame = () => {
         startTime: null,
         createdAt: Date.now(),
         iconCount: iconCount,
-        gridSize: gridSize
+        gridSize: gridSize,
+        timeLimit: timeLimitMinutes * 60 // <-- lưu time limit (giây)
       };
 
       await db.set(`rooms/${code}`, roomData);
@@ -367,9 +488,10 @@ const PikachuGame = () => {
       setMyPlayerId(playerId);
       setGameState(roomData);
       setGridSize(gridSize);
+      setTimeLeft(roomData.timeLimit || 300); // sync local timer
       setScreen('game');
       
-      db.listen(`rooms/${code}`, (data, eventType) => {
+      db.listen(`rooms/${code}`, (data: any, eventType: string) => {
         if (data) {
           if (eventType === 'put') {
             setGameState(data);
@@ -391,7 +513,8 @@ const PikachuGame = () => {
           
           if (data.startTime && data.status === 'playing') {
             const elapsed = Math.floor((Date.now() - data.startTime) / 1000);
-            setTimeLeft(Math.max(0, 180 - elapsed));
+            const limit = data.timeLimit || 300;
+            setTimeLeft(Math.max(0, limit - elapsed));
           }
         }
       });
@@ -406,8 +529,15 @@ const PikachuGame = () => {
   };
 
   const joinRoom = async (code = roomCode) => {
+    // Thêm vào createRoom / joinRoom
+    if (Object.keys(room.players || {}).length >= 8) {
+      showNotification('Phòng đã đầy!', 'error');
+      return;
+    }
+    
+    // guard: if no room loaded (we use server value)
     if (!playerName.trim() || !code.trim()) {
-      showNotification('Vui lòng nhập đầy đủ thông tin!', 'error');
+      showNotification('Vui lòng nhập mã phòng!', 'error');
       return;
     }
 
@@ -417,11 +547,26 @@ const PikachuGame = () => {
       
       if (!room) {
         showNotification('Không tìm thấy phòng!', 'error');
+        setIsLoading(false);
         return;
       }
 
       if (room.status === 'finished') {
         showNotification('Phòng này đã kết thúc!', 'error');
+        setIsLoading(false);
+        return;
+      }
+
+      // check players capacity
+      if (room.players && Object.keys(room.players).length >= 8) {
+        showNotification('Phòng đã đầy!', 'error');
+        setIsLoading(false);
+        return;
+      }
+
+      if (!playerName.trim()) {
+        showNotification('Vui lòng nhập tên!', 'error');
+        setIsLoading(false);
         return;
       }
 
@@ -437,9 +582,10 @@ const PikachuGame = () => {
       setGameState(room);
       setRoomCode(code);
       setGridSize(room.gridSize || 8);
+      setTimeLeft(room.timeLimit || 300);
       setScreen('game');
       
-      db.listen(`rooms/${code}`, (data, eventType) => {
+      db.listen(`rooms/${code}`, (data: any, eventType: string) => {
         if (data) {
           if (eventType === 'put') {
             setGameState(data);
@@ -452,7 +598,8 @@ const PikachuGame = () => {
           
           if (data.startTime && data.status === 'playing') {
             const elapsed = Math.floor((Date.now() - data.startTime) / 1000);
-            setTimeLeft(Math.max(0, 180 - elapsed));
+            const limit = data.timeLimit || 300;
+            setTimeLeft(Math.max(0, limit - elapsed));
           }
         }
       });
@@ -468,15 +615,47 @@ const PikachuGame = () => {
 
   const startGame = async () => {
     if (gameState?.status === 'waiting') {
+      const limit = gameState.timeLimit || 300;
+      const startTime = Date.now();
       await db.update(`rooms/${roomCode}`, {
         status: 'playing',
-        startTime: Date.now()
+        startTime
       });
+      setTimeLeft(limit);
       showNotification('Game bắt đầu!', 'success');
     }
   };
 
-  const handleCellClick = async (index) => {
+  // NEW: playAgain - tạo ván mới, reset điểm, set status playing (bắt đầu ván mới ngay)
+  const playAgain = async () => {
+    if (!gameState) return;
+    const size = gameState.gridSize || gridSize;
+    const newBoard = generateBoard(size);
+
+    // reset players' scores to 0 (preserve names and ids)
+    const newPlayers: any = {};
+    Object.keys(gameState.players || {}).forEach((pid) => {
+      newPlayers[pid] = { ...(gameState.players[pid]), score: 0 };
+    });
+
+    const startTime = Date.now();
+    const limit = gameState.timeLimit || 300;
+
+    await db.update(`rooms/${roomCode}`, {
+      board: newBoard,
+      players: newPlayers,
+      status: 'playing',
+      startTime
+    });
+
+    setTimeLeft(limit);
+    setSelectedCells([]);
+    setConnectionPath(null);
+    setHintCells([]);
+    showNotification('Bắt đầu ván mới!', 'success');
+  };
+
+  const handleCellClick = async (index: number) => {
     if (!gameState || gameState.status !== 'playing') return;
     const cell = gameState.board[index];
     if (!cell || cell.matched || cell.isEmpty) return;
@@ -515,7 +694,7 @@ const PikachuGame = () => {
           setConnectionPath(null);
           
           setTimeout(() => {
-            const allMatched = newBoard.every(cell => !cell || cell.matched || cell.isEmpty);
+            const allMatched = newBoard.every((cell: any) => !cell || cell.matched || cell.isEmpty);
             if (allMatched) {
               db.update(`rooms/${roomCode}`, { status: 'finished' });
               showNotification('Game kết thúc!', 'success');
@@ -573,12 +752,12 @@ const PikachuGame = () => {
 
 
   const gridSizeGame = gameState?.gridSize || 8;
-  let gridSizeClass = gridSizeGame || 8;
+  let gridSizeClass: string | undefined = undefined;
   
   if(gridSizeGame > 15){
     gridSizeClass = ``
   }else if(gridSizeGame > 12){
-    gridSizeClass = `max-w-4xl`
+    gridSizeClass = `max-w-5xl`
   } else if(gridSizeGame > 10){
     gridSizeClass = `max-w-3xl`
   } else {
@@ -745,6 +924,28 @@ const PikachuGame = () => {
                 )}
               </p>
             </div>
+
+            {/* NEW: Time limit selector */}
+            <div>
+              <label className="block text-gray-700 font-semibold mb-2">
+                Thời gian mỗi ván: {timeLimitMinutes} phút
+              </label>
+              <select
+                value={timeLimitMinutes}
+                onChange={(e) => setTimeLimitMinutes(parseInt(e.target.value))}
+                className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-blue-500 focus:outline-none text-gray-800 bg-white"
+                disabled={isLoading}
+              >
+                {Array.from({ length: 60 }, (_, i) => i + 1).map((min) => (
+                  <option key={min} value={min}>
+                    {min} phút
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Mặc định: 5 phút. Chọn từ 1 đến 60 phút cho mỗi ván.
+              </p>
+            </div>
             
             <button
               onClick={createRoom}
@@ -863,6 +1064,9 @@ const PikachuGame = () => {
                 <div className="text-3xl font-bold text-gray-800">
                   {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
                 </div>
+                <div className="text-xs text-gray-500">
+                  / {(gameState.timeLimit ? Math.round(gameState.timeLimit / 60) : 5)} phút
+                </div>
               </div>
               
               <div className="flex gap-2 flex-wrap">
@@ -931,8 +1135,8 @@ const PikachuGame = () => {
                   <p className="text-center text-gray-500 text-sm">Chưa có người chơi</p>
                 ) : (
                   playerList
-                    .sort((a, b) => b[1].score - a[1].score)
-                    .map(([id, player], index) => (
+                    .sort((a: any, b: any) => b[1].score - a[1].score)
+                    .map(([id, player]: any, index: number) => (
                       <div key={id} className={`p-3 rounded-xl mb-2 ${id === myPlayerId ? 'bg-blue-50 border-2 border-blue-300' : 'bg-gray-50'}`}>
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
@@ -961,7 +1165,7 @@ const PikachuGame = () => {
                   Người chơi ({playerList.length})
                 </h3>
                 <div className="space-y-2">
-                  {playerList.map(([id, player]) => (
+                  {playerList.map(([id, player]: any) => (
                     <div key={id} className="flex items-center gap-2 p-2 bg-gray-50 rounded-lg">
                       <div className="w-8 h-8 bg-gradient-to-br from-purple-400 to-pink-400 rounded-full flex items-center justify-center text-white font-bold text-sm">
                         {player.name.charAt(0).toUpperCase()}
@@ -994,11 +1198,11 @@ const PikachuGame = () => {
                   </p>
                   {playerList.length > 0 && (
                     <p className="text-sm text-gray-700 text-center mb-3">
-                      {playerList.sort((a, b) => b[1].score - a[1].score)[0][1].name} chiến thắng!
+                      {playerList.sort((a: any, b: any) => b[1].score - a[1].score)[0][1].name} chiến thắng!
                     </p>
                   )}
                   <button
-                    onClick={() => window.location.reload()}
+                    onClick={playAgain} // <- đã sửa: tạo ván mới + reset điểm + reset thời gian
                     className="w-full bg-blue-500 text-white py-2 rounded-lg font-semibold hover:bg-blue-600 transition flex items-center justify-center gap-2"
                   >
                     <RefreshCw className="w-4 h-4" />
@@ -1015,7 +1219,7 @@ const PikachuGame = () => {
                     {gameState.iconCount ? `${gameState.iconCount} loại nhân vật` : '32 nhân vật'} • Bàn {gameState.gridSize || 8}x{gameState.gridSize || 8}
                   </p>
                   <p className="text-sm font-semibold text-blue-600">
-                    {gameState.board.filter(c => c && c.matched && !c.isEmpty).length}/{gameState.board.filter(c => c && !c.isEmpty).length} ô
+                    {gameState.board.filter((c: any) => c && c.matched && !c.isEmpty).length}/{gameState.board.filter((c: any) => c && !c.isEmpty).length} ô
                   </p>
                 </div>
                 <div 
@@ -1025,25 +1229,31 @@ const PikachuGame = () => {
                   }}
                 >
                   {connectionPath && (
-                    <svg className="absolute inset-0 pointer-events-none" style={{ width: '100%', height: '100%' }}>
-                      <polyline
-                        points={connectionPath.map(([row, col]) => {
-                          const cellSize = 100 / (gameState.gridSize || 8);
-                          const x = (col + 0.5) * cellSize;
-                          const y = (row + 0.5) * cellSize;
-                          return `${x}%,${y}%`;
-                        }).join(' ')}
-                        fill="none"
-                        stroke="#facc15"
-                        strokeWidth="4"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className="animate-pulse"
-                      />
-                    </svg>
-                  )}
+                      <svg
+                        className="absolute inset-0 pointer-events-none"
+                        style={{ width: '100%', height: '100%' }}
+                        viewBox="0 0 100 100"
+                        preserveAspectRatio="none"
+                      >
+                        <polyline
+                          points={connectionPath.map(([row, col]: number[]) => {
+                            const size = gameState.gridSize || 8;
+                            const cellSize = 100 / size;
+                            const x = (col + 0.5) * cellSize;
+                            const y = (row + 0.5) * cellSize;
+                            return `${x},${y}`;
+                          }).join(' ')}
+                          fill="none"
+                          stroke="#facc15"
+                          strokeWidth={1}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="animate-pulse"
+                        />
+                      </svg>
+                    )}
                   
-                  {gameState.board.map((cell, index) => {
+                  {gameState.board.map((cell: any, index: number) => {
                     if (!cell) return null;
                     const isSelected = selectedCells.includes(index);
                     const isMatched = cell.matched;
