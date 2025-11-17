@@ -571,6 +571,7 @@ const PikachuGame = () => {
     };
   }, [roomCode]);
 
+
   const gridSizeGame = gameState?.gridSize || 8;
   let gridSizeClass = gridSizeGame || 8;
   
