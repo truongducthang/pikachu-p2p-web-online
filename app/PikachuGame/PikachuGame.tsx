@@ -938,8 +938,8 @@ const PikachuGame = () => {
   let gridSizeClass: string | undefined = undefined;
   
   if(gridSizeGame === 16){
-gridSizeClass = `max-w-7xl`
-  } else
+      gridSizeClass = `max-w-7xl`
+        } else
   if(gridSizeGame > 15){
     gridSizeClass = ``
   }else if(gridSizeGame > 12){
