@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Gamepad2, Users, Trophy, Timer, Zap, RefreshCw, Copy, LogOut, Shuffle, Maximize, Minimize } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Gamepad2, Users, Trophy, Timer, Zap, RefreshCw, Copy, LogOut, Shuffle, Maximize, Minimize, MessageSquare, X } from 'lucide-react';
 
 // ===== FIREBASE CONFIG =====
 const FIREBASE_CONFIG = {
@@ -104,6 +104,13 @@ const PikachuGame = () => {
   // NEW: time limit minutes setting on create screen
   const [timeLimitMinutes, setTimeLimitMinutes] = useState(5); // default 5 phút
 
+  // Chat states
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const chatListRef = useRef<HTMLDivElement | null>(null);
+  const MAX_CHAT_MESSAGES = 200; // chứa tối đa 200 tin nhắn cục bộ hiển thị
+
   const icons = ['🐱', '🐶', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🐔', '🐙', '🦀', '🐠', '🐟', '🦈', '🐡', '🦐', '🦑', '🐢', '🦎', '🐊', '🦖', '🦕', '🐉', '🦅', '🦉', '🦋', '🐌', '🐛', '🐝', '🐞', '🦗', '🕷️', '🦂', '🦟', '🦠', '🐍', '🦎', '🐙', '🦑', '🦐', '🦞', '🦀', '🐡', '🐠', '🐟', '🐬', '🐳', '🐋', '🦈', '🐊', '🐅', '🐆', '🦓', '🦍', '🦧', '🐘', '🦛', '🦏', '🐪', '🐫', '🦒', '🦘', '🦬', '🐃', '🐂', '🐄', '🐎', '🐖', '🐏', '🐑', '🦙', '🐐', '🦌', '🐕', '🐩', '🦮', '🐈', '🐓', '🦃', '🦚', '🦜', '🦢', '🦩', '🕊️', '🐇', '🦝', '🦨', '🦡', '🦫', '🦦', '🦥', '🐁', '🐀', '🐿️', '🦔'];
 
   useEffect(() => {
@@ -127,27 +134,6 @@ const PikachuGame = () => {
       return () => clearTimeout(timer);
     }
   }, [gameState?.status]);
-
-
-  const loadRoomList = async () => {
-    try {
-      const rooms = await db.get('rooms');
-      if (rooms) {
-        const roomArray = Object.entries(rooms)
-          .map(([code, data]) => ({
-            code,
-            ...data,
-            playerCount: data.players ? Object.keys(data.players).length : 0
-          }))
-          .filter(room => room.status !== 'finished')
-          .sort((a, b) => b.createdAt - a.createdAt)
-          .slice(0, 10);
-        setRoomList(roomArray);
-      }
-    } catch (error) {
-      console.error('Load room list error:', error);
-    }
-  };
 
   // generateBoard now accepts optional size
   const generateBoard = (sizeParam?: number) => {
@@ -479,7 +465,8 @@ const PikachuGame = () => {
         createdAt: Date.now(),
         iconCount: iconCount,
         gridSize: gridSize,
-        timeLimit: timeLimitMinutes * 60 // <-- lưu time limit (giây)
+        timeLimit: timeLimitMinutes * 60, // <-- lưu time limit (giây)
+        chat: {} // khởi tạo chat rỗng
       };
 
       await db.set(`rooms/${code}`, roomData);
@@ -489,9 +476,12 @@ const PikachuGame = () => {
       setGameState(roomData);
       setGridSize(gridSize);
       setTimeLeft(roomData.timeLimit || 300); // sync local timer
+      setChatMessages([]); // clear local chat
       setScreen('game');
       
       db.listen(`rooms/${code}`, (data: any, eventType: string) => {
+        console.log('[ES] event', eventType, data);
+
         if (data) {
           if (eventType === 'put') {
             setGameState(data);
@@ -503,11 +493,27 @@ const PikachuGame = () => {
                   newState.players = { ...prevState.players, ...data.players };
                 } else if (key === 'board' && data.board) {
                   newState.board = data.board;
+                } else if (key === 'chat' && data.chat) {
+                  // merge chat safely
+                  newState.chat = { ...prevState.chat, ...data.chat };
                 } else {
                   newState[key] = data[key];
                 }
               });
               return newState;
+            });
+          }
+          
+          if (data.chat) {
+            // transform object -> sorted array
+            const arr = Object.values(data.chat || {}).filter(Boolean).sort((a: any, b: any) => a.ts - b.ts);
+            setChatMessages(prev => {
+              // merge unique by id
+              const map = new Map(prev.map((m: any) => [m.id, m]));
+              arr.forEach((m: any) => map.set(m.id, m));
+              const merged = Array.from(map.values()).sort((a: any, b: any) => a.ts - b.ts);
+              // trim to MAX_CHAT_MESSAGES
+              return merged.slice(Math.max(0, merged.length - MAX_CHAT_MESSAGES));
             });
           }
           
@@ -528,10 +534,30 @@ const PikachuGame = () => {
     }
   };
 
+  const loadRoomList = async () => {
+    try {
+      const rooms = await db.get('rooms');
+      if (rooms) {
+        const roomArray = Object.entries(rooms)
+          .map(([code, data]: any) => ({
+            code,
+            ...data,
+            playerCount: data.players ? Object.keys(data.players).length : 0
+          }))
+          .filter(room => room.status !== 'finished')
+          .sort((a, b) => b.createdAt - a.createdAt)
+          .slice(0, 10);
+        setRoomList(roomArray);
+      }
+    } catch (error) {
+      console.error('Load room list error:', error);
+    }
+  };
+
   const joinRoom = async (code = roomCode) => {
-    
+    // Thêm vào createRoom / joinRoom
     // guard: if no room loaded (we use server value)
-    if (!playerName.trim() || !code.trim()) {
+    if (!code) {
       showNotification('Vui lòng nhập mã phòng!', 'error');
       return;
     }
@@ -578,26 +604,49 @@ const PikachuGame = () => {
       setRoomCode(code);
       setGridSize(room.gridSize || 8);
       setTimeLeft(room.timeLimit || 300);
+      // load chat from room
+      const chatObj = room.chat || {};
+      const chatArr = Object.values(chatObj).filter(Boolean).sort((a: any, b: any) => a.ts - b.ts);
+      setChatMessages(chatArr.slice(Math.max(0, chatArr.length - MAX_CHAT_MESSAGES)));
       setScreen('game');
       
-      db.listen(`rooms/${code}`, (data: any, eventType: string) => {
-        if (data) {
-          if (eventType === 'put') {
-            setGameState(data);
-          } else if (eventType === 'patch') {
-            setGameState(prevState => ({
-              ...prevState,
-              ...data
-            }));
-          }
-          
-          if (data.startTime && data.status === 'playing') {
-            const elapsed = Math.floor((Date.now() - data.startTime) / 1000);
-            const limit = data.timeLimit || 300;
-            setTimeLeft(Math.max(0, limit - elapsed));
-          }
+      db.listen(`rooms/${code}`, (rawData, eventType) => {
+        if (!rawData) return;
+        const data = eventType === 'patch' ? normalizePatchData(rawData) : rawData;
+      
+        // merge chat if present
+        if (data.chat) {
+          const arr = Object.values(data.chat || {}).filter(Boolean).sort((a: any, b: any) => a.ts - b.ts);
+          setChatMessages(prev => {
+            const map = new Map(prev.map((m: any) => [m.id, m]));
+            arr.forEach((m: any) => map.set(m.id, m));
+            const merged = Array.from(map.values()).sort((a: any, b: any) => a.ts - b.ts);
+            return merged.slice(Math.max(0, merged.length - MAX_CHAT_MESSAGES));
+          });
+        }
+      
+        // merge the rest into gameState similar như trước
+        if (eventType === 'put') {
+          setGameState(data);
+        } else if (eventType === 'patch') {
+          setGameState(prevState => {
+            const newState = { ...prevState };
+            Object.keys(data).forEach(key => {
+              if (key === 'players' && data.players) {
+                newState.players = { ...prevState.players, ...data.players };
+              } else if (key === 'board' && data.board) {
+                newState.board = data.board;
+              } else if (key === 'chat' && data.chat) {
+                newState.chat = { ...prevState.chat, ...data.chat };
+              } else {
+                newState[key] = data[key];
+              }
+            });
+            return newState;
+          });
         }
       });
+      
       
       showNotification('Vào phòng thành công!', 'success');
     } catch (error) {
@@ -717,6 +766,7 @@ const PikachuGame = () => {
     setSelectedCells([]);
     setConnectionPath(null);
     setHintCells([]);
+    setChatMessages([]);
   };
 
   useEffect(() => {
@@ -745,6 +795,144 @@ const PikachuGame = () => {
     };
   }, [roomCode]);
 
+    // helper nhỏ: nếu payload có keys chứa '/', convert thành nested object
+  const normalizePatchData = (patchData: any) => {
+    const result: any = {};
+    Object.keys(patchData).forEach((key) => {
+      const val = patchData[key];
+      if (key.includes('/')) {
+        // ex: "chat/1634_abcd" => ['chat','1634_abcd']
+        const parts = key.split('/');
+        // We'll only handle one-level nesting like chat/<id>
+        const top = parts[0];
+        const sub = parts.slice(1).join('/');
+        result[top] = result[top] || {};
+        result[top][sub] = val;
+      } else {
+        result[key] = val;
+      }
+    });
+    return result;
+  };
+
+
+// Replace existing sendChatMessage with this safe version
+    const sendChatMessage = async () => {
+      if (!chatInput.trim()) return;
+      if (!roomCode) return;
+
+      const id = `${Date.now()}_${Math.random().toString(36).substr(2,5)}`;
+      const msg = {
+        id,
+        senderId: myPlayerId,
+        senderName: playerName,
+        text: chatInput.trim(),
+        ts: Date.now()
+      };
+
+      try {
+        // ====== SAFE UPDATE: patch vào child 'chat' (không ghi đè node rooms/{roomCode}) ======
+        // Using update to /rooms/{roomCode}/chat with payload { [id]: msg }
+        await db.update(`rooms/${roomCode}/chat`, { [id]: msg });
+
+        // optimistic local update (no reliance on gameState)
+        setChatInput('');
+        setChatMessages(prev => {
+          const merged = [...prev, msg];
+          // trim to max
+          const start = Math.max(0, merged.length - MAX_CHAT_MESSAGES);
+          const sliced = merged.slice(start);
+          // scroll after a tick
+          setTimeout(() => {
+            chatListRef.current?.scrollTo({ top: chatListRef.current.scrollHeight, behavior: 'smooth' });
+          }, 20);
+          return sliced;
+        });
+
+        console.log('[chat] sent msg', msg);
+      } catch (err) {
+        console.error('Send chat error', err);
+        showNotification('Gửi tin nhắn thất bại', 'error');
+      }
+    };
+
+
+
+  // scroll to bottom when chatMessages changes
+  useEffect(() => {
+    setTimeout(() => {
+      if (chatOpen) chatListRef.current?.scrollTo({ top: chatListRef.current.scrollHeight, behavior: 'smooth' });
+    }, 50);
+  }, [chatMessages, chatOpen]);
+
+  const renderChatBox = () => {
+    return (
+      <div className="fixed bottom-6 left-6 z-50 flex flex-col items-start">
+        {/* Chat toggle button */}
+        {/* Chat popup */}
+        {chatOpen && (
+          <div className="w-80 md:w-96 bg-white rounded-xl shadow-2xl overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-3 py-2 border-b">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-gray-700" />
+                <div>
+                  <div className="text-sm font-semibold text-gray-800">Chat phòng {roomCode}</div>
+                  <div className="text-xs text-gray-500">{(gameState?.players ? Object.keys(gameState.players).length : 0)} người</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => { setChatOpen(false); }} className="p-1 rounded hover:bg-gray-100">
+                  <X className="w-4 h-4 text-gray-600" />
+                </button>
+              </div>
+            </div>
+
+            <div ref={chatListRef} className="p-3 overflow-y-auto" style={{ maxHeight: 220 }}>
+              {chatMessages.length === 0 ? (
+                <div className="text-xs text-gray-500 text-center py-8">Chưa có tin nhắn</div>
+              ) : (
+                chatMessages.map((m: any) => (
+                  <div key={m.id} className={`mb-2 flex ${m.senderId === myPlayerId ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`${m.senderId === myPlayerId ? 'bg-blue-100 text-gray-900' : 'bg-gray-100 text-gray-900'} rounded-lg px-3 py-2 max-w-[80%]`}>
+                      <div className="text-xs text-gray-600 mb-1">{m.senderName} • {new Date(m.ts).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+                      <div className="text-sm break-words">{m.text}</div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="px-3 py-2 border-t flex gap-2 items-center">
+              <input
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') sendChatMessage(); }}
+                placeholder="Gửi tin nhắn..."
+                className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-blue-500 focus:outline-none text-gray-800 bg-white"
+              />
+              <button
+                onClick={sendChatMessage}
+                className="bg-indigo-600 text-white px-3 py-2 rounded-lg font-semibold hover:bg-indigo-700 transition"
+              >
+                Gửi
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-2">
+          <button
+            onClick={() => setChatOpen(v => !v)}
+            className="bg-indigo-600 text-white p-3 rounded-full shadow-lg hover:bg-indigo-700 transition flex items-center gap-2"
+            title="Chat phòng"
+          >
+            <MessageSquare className="w-5 h-5" />
+            <span className="hidden sm:inline">Chat</span>
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   const gridSizeGame = gameState?.gridSize || 8;
   let gridSizeClass: string | undefined = undefined;
@@ -834,6 +1022,9 @@ const PikachuGame = () => {
             </div>
           )}
         </div>
+
+        {/* Chat toggle on menu too (optional) */}
+        {renderChatBox()}
       </div>
     );
   }
@@ -961,6 +1152,8 @@ const PikachuGame = () => {
             </button>
           </div>
         </div>
+
+        {renderChatBox()}
       </div>
     );
   }
@@ -1022,6 +1215,8 @@ const PikachuGame = () => {
             </button>
           </div>
         </div>
+
+        {renderChatBox()}
       </div>
     );
   }
@@ -1214,7 +1409,7 @@ const PikachuGame = () => {
                     {gameState.iconCount ? `${gameState.iconCount} loại nhân vật` : '32 nhân vật'} • Bàn {gameState.gridSize || 8}x{gameState.gridSize || 8}
                   </p>
                   <p className="text-sm font-semibold text-blue-600">
-                    {gameState.board.filter((c: any) => c && c.matched && !c.isEmpty).length}/{gameState.board.filter((c: any) => c && !c.isEmpty).length} ô
+                    {(gameState.board ?? []).filter((c: any) => c && c.matched && !c.isEmpty).length}/{(gameState.board ?? []).filter((c: any) => c && !c.isEmpty).length} ô
                   </p>
                 </div>
                 <div 
@@ -1248,7 +1443,7 @@ const PikachuGame = () => {
                       </svg>
                     )}
                   
-                  {gameState.board.map((cell: any, index: number) => {
+                  {(gameState.board ?? []).map((cell: any, index: number) => {
                     if (!cell) return null;
                     const isSelected = selectedCells.includes(index);
                     const isMatched = cell.matched;
@@ -1288,6 +1483,9 @@ const PikachuGame = () => {
             </div>
           </div>
         </div>
+
+        {/* Chat */}
+        {renderChatBox()}
       </div>
     );
   }
