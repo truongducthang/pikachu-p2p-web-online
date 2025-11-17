@@ -529,11 +529,6 @@ const PikachuGame = () => {
   };
 
   const joinRoom = async (code = roomCode) => {
-    // Thêm vào createRoom / joinRoom
-    if (Object.keys(room.players || {}).length >= 8) {
-      showNotification('Phòng đã đầy!', 'error');
-      return;
-    }
     
     // guard: if no room loaded (we use server value)
     if (!playerName.trim() || !code.trim()) {
